@@ -41,5 +41,5 @@
     "moduleDetection": "force",
     "skipLibCheck": true,
   },
-  "exclude": ["test-*.ts", "test-*.js", "dist", "node_modules"]
+  "exclude": ["tests", "dist", "node_modules", "**/*.test.ts", "**/*.spec.ts"]
 }

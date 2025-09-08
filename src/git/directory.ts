@@ -1,4 +1,4 @@
-import { homedir, tmpdir } from 'os';
+import { homedir } from 'os';
 import { join, basename } from 'path';
 import { createHash, randomBytes } from 'crypto';
 import { mkdir, readFile, writeFile, access, readdir, rm, rename } from 'fs/promises';
@@ -23,10 +23,7 @@ export class DirectoryManager {
   }
 
   private hashPath(projectPath: string): string {
-    return createHash('sha256')
-      .update(projectPath)
-      .digest('hex')
-      .slice(0, 12);
+    return createHash('sha256').update(projectPath).digest('hex').slice(0, 12);
   }
 
   getProjectDirName(projectPath: string): string {
@@ -83,19 +80,19 @@ export class DirectoryManager {
 
   private async withLock<T>(projectPath: string, fn: () => Promise<T>): Promise<T> {
     const lockKey = this.getProjectDir(projectPath);
-    
+
     const existingLock = this.activeLocks.get(lockKey);
     if (existingLock) {
       await existingLock;
     }
-    
+
     let releaseLock: () => void;
     const lockPromise = new Promise<void>((resolve) => {
       releaseLock = resolve;
     });
-    
+
     this.activeLocks.set(lockKey, lockPromise);
-    
+
     try {
       return await fn();
     } finally {
@@ -144,8 +141,8 @@ export class DirectoryManager {
   }
 
   async updateVariant(
-    projectPath: string, 
-    variantId: string, 
+    projectPath: string,
+    variantId: string,
     updater: (variant: Variant) => Variant
   ): Promise<void> {
     await this.withLock(projectPath, async () => {
@@ -154,7 +151,7 @@ export class DirectoryManager {
         throw new Error('Project metadata not found');
       }
 
-      const variantIndex = metadata.variants.findIndex(v => v.id === variantId);
+      const variantIndex = metadata.variants.findIndex((v) => v.id === variantId);
       if (variantIndex === -1) {
         throw new Error(`Variant ${variantId} not found`);
       }
@@ -163,7 +160,7 @@ export class DirectoryManager {
       if (!variant) {
         throw new Error(`Variant ${variantId} not found`);
       }
-      
+
       metadata.variants[variantIndex] = updater(variant);
       metadata.lastAccessedAt = new Date().toISOString();
       await this.writeMetadata(projectPath, metadata);
@@ -177,7 +174,7 @@ export class DirectoryManager {
         return;
       }
 
-      metadata.variants = metadata.variants.filter(v => v.id !== variantId);
+      metadata.variants = metadata.variants.filter((v) => v.id !== variantId);
       metadata.lastAccessedAt = new Date().toISOString();
       await this.writeMetadata(projectPath, metadata);
 
@@ -197,9 +194,9 @@ export class DirectoryManager {
     }
 
     const existingIds = metadata.variants
-      .map(v => v.id)
-      .filter(id => /^\d{3}$/.test(id))
-      .map(id => parseInt(id, 10));
+      .map((v) => v.id)
+      .filter((id) => /^\d{3}$/.test(id))
+      .map((id) => parseInt(id, 10));
 
     const maxId = Math.max(0, ...existingIds);
     return String(maxId + 1).padStart(3, '0');

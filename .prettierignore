@@ -1,0 +1,9 @@
+dist
+node_modules
+*.log
+coverage
+.git
+.husky
+package-lock.json
+tsconfig.json
+*.md
