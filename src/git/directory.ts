@@ -187,6 +187,37 @@ export class DirectoryManager {
     });
   }
 
+  async allocateVariantId(projectPath: string): Promise<string> {
+    return this.withLock(projectPath, async () => {
+      let metadata = await this.readMetadata(projectPath);
+      if (!metadata) {
+        metadata = await this.initializeMetadata(projectPath);
+      }
+
+      const existingIds = metadata.variants
+        .map((v) => v.id)
+        .filter((id) => /^\d{3}$/.test(id))
+        .map((id) => parseInt(id, 10));
+
+      const maxId = Math.max(0, ...existingIds);
+      const newId = String(maxId + 1).padStart(3, '0');
+
+      // Reserve the ID by adding a placeholder variant
+      const placeholder: Variant = {
+        id: newId,
+        branch: '',
+        createdAt: new Date().toISOString(),
+        status: 'allocating',
+      };
+
+      metadata.variants.push(placeholder);
+      metadata.lastAccessedAt = new Date().toISOString();
+      await this.writeMetadata(projectPath, metadata);
+
+      return newId;
+    });
+  }
+
   async getNextVariantId(projectPath: string): Promise<string> {
     const metadata = await this.readMetadata(projectPath);
     if (!metadata || metadata.variants.length === 0) {

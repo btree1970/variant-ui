@@ -3,7 +3,6 @@ import { DirectoryManager } from './directory.js';
 import { join } from 'path';
 import { writeFile, rm } from 'fs/promises';
 import { spawn } from 'node:child_process';
-import type { Variant } from '../types.js';
 
 export interface WorktreeInfo {
   path: string;
@@ -108,26 +107,14 @@ export class WorktreeManager {
       }
     }
 
-    // Allocate variant atomically
-    const variantId = await this.directoryManager.getNextVariantId(this.projectPath);
+    // Allocate variant ID atomically
+    const variantId = await this.directoryManager.allocateVariantId(this.projectPath);
 
     const slug = this.sanitizeSlug(description);
     const branchName = `ui-var/${variantId}${slug ? `-${slug}` : ''}`;
     const worktreePath = this.directoryManager.getVariantDir(this.projectPath, variantId);
 
-    // Create initial metadata entry
-    const originUrl = await this.getOriginUrl();
-    const variant: Variant = {
-      id: variantId,
-      branch: branchName,
-      ...(description && { description }),
-      createdAt: new Date().toISOString(),
-      status: 'created',
-    };
-
     try {
-      await this.directoryManager.addVariant(this.projectPath, variant, originUrl?.fetch);
-
       // Check if branch already exists
       const branches = await this.git.branchLocal();
       const branchExists = branches.all.includes(branchName);
@@ -143,11 +130,15 @@ export class WorktreeManager {
       const log = await worktreeGit.log({ maxCount: 1 });
       const baseCommit = log.latest?.hash || '';
 
-      // Update variant with success status
+      // Update the placeholder variant with full details
+      const originUrl = await this.getOriginUrl();
       await this.directoryManager.updateVariant(this.projectPath, variantId, (v) => ({
         ...v,
+        branch: branchName,
+        ...(description && { description }),
         status: 'created',
         lastUpdatedAt: new Date().toISOString(),
+        ...(originUrl?.fetch && !v.originUrl && { originUrl: originUrl.fetch }),
       }));
 
       return {
@@ -161,6 +152,7 @@ export class WorktreeManager {
       await this.directoryManager.updateVariant(this.projectPath, variantId, (v) => ({
         ...v,
         status: 'failed',
+        error: (error as Error).message,
         lastUpdatedAt: new Date().toISOString(),
       }));
 
@@ -183,10 +175,10 @@ export class WorktreeManager {
     // Remove worktree (always attempt removal, git handles non-existent paths gracefully)
     try {
       await this.git.raw(['worktree', 'remove', worktreePath, '--force']);
-    } catch (error: any) {
+    } catch (error) {
       // Only log if it's a real error, not just "not a working tree"
-      if (!error.message.includes('not a working tree')) {
-        console.error(`Failed to remove worktree: ${error.message}`);
+      if (!(error as Error).message.includes('not a working tree')) {
+        console.error(`Failed to remove worktree: ${(error as Error).message}`);
       }
     }
 
@@ -197,8 +189,8 @@ export class WorktreeManager {
         if (branches.all.includes(variant.branch)) {
           await this.git.branch(['-D', variant.branch]);
         }
-      } catch (error: any) {
-        console.error(`Failed to delete branch ${variant.branch}: ${error.message}`);
+      } catch (error) {
+        console.error(`Failed to delete branch ${variant.branch}: ${(error as Error).message}`);
       }
     }
 
@@ -273,25 +265,56 @@ export class WorktreeManager {
       // Write patch to temp file
       await writeFile(patchPath, patchContent, 'utf8');
 
-      // Apply patch using spawn
-      await new Promise<void>((resolve, reject) => {
-        const proc = spawn('git', ['apply', '--whitespace=nowarn', patchPath], {
-          cwd: worktreePath,
-        });
+      // Try 3-way merge first for better conflict resolution
+      let applied = false;
+      let applyError = '';
 
-        let stderr = '';
-        proc.stderr.on('data', (data) => {
-          stderr += data.toString();
-        });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn('git', ['apply', '--3way', '--whitespace=nowarn', patchPath], {
+            cwd: worktreePath,
+          });
 
-        proc.on('exit', (code) => {
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error(`git apply failed (exit ${code}): ${stderr}`));
-          }
+          let stderr = '';
+          proc.stderr.on('data', (data) => {
+            stderr += data.toString();
+          });
+
+          proc.on('exit', (code) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(new Error(`3-way merge failed: ${stderr}`));
+            }
+          });
         });
-      });
+        applied = true;
+      } catch (error) {
+        applyError = (error as Error).message;
+        // Fall back to regular apply without 3-way
+        await new Promise<void>((resolve, reject) => {
+          const proc = spawn('git', ['apply', '--whitespace=nowarn', patchPath], {
+            cwd: worktreePath,
+          });
+
+          let stderr = '';
+          proc.stderr.on('data', (data) => {
+            stderr += data.toString();
+          });
+
+          proc.on('exit', (code) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(
+                new Error(
+                  `git apply failed (exit ${code}): ${stderr}. 3-way attempt: ${applyError}`
+                )
+              );
+            }
+          });
+        });
+      }
 
       // Stage and commit changes
       const worktreeGit = simpleGit(worktreePath);
@@ -299,7 +322,10 @@ export class WorktreeManager {
 
       const status = await worktreeGit.status();
       if (!status.isClean()) {
-        await worktreeGit.commit(`Apply patch to variant ${variantId}`);
+        const commitMessage = applied
+          ? `Apply patch to variant ${variantId} (3-way merge)`
+          : `Apply patch to variant ${variantId}`;
+        await worktreeGit.commit(commitMessage);
       }
 
       // Update metadata

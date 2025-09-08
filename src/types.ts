@@ -1,4 +1,4 @@
-export type VariantStatus = 'created' | 'running' | 'stopped' | 'failed';
+export type VariantStatus = 'allocating' | 'created' | 'running' | 'stopped' | 'failed';
 
 export interface Variant {
   id: string; // "001"
@@ -9,6 +9,8 @@ export interface Variant {
   lastUpdatedAt?: string;
   status?: VariantStatus;
   description?: string; // optional description of the variant
+  error?: string; // error message if status is 'failed'
+  originUrl?: string; // git remote URL if available
 }
 
 export interface ProjectMetadata {
