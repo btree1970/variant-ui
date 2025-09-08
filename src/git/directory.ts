@@ -1,7 +1,7 @@
-import { homedir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { join, basename } from 'path';
-import { createHash } from 'crypto';
-import { mkdir, readFile, writeFile, access, readdir, rm } from 'fs/promises';
+import { createHash, randomBytes } from 'crypto';
+import { mkdir, readFile, writeFile, access, readdir, rm, rename } from 'fs/promises';
 import { constants } from 'fs';
 import type { ProjectMetadata, Variant } from '../types.js';
 
@@ -10,6 +10,9 @@ const VARIANTS_SUBDIR = 'variants';
 
 export class DirectoryManager {
   private baseDir: string;
+  private lockTimeoutMs = 5000;
+  private lockRetryMs = 50;
+  private activeLocks = new Map<string, Promise<void>>();
 
   constructor(customBaseDir?: string) {
     this.baseDir = customBaseDir || join(homedir(), BASE_DIR_NAME);
@@ -63,10 +66,48 @@ export class DirectoryManager {
     }
   }
 
+  private async atomicWrite(filePath: string, content: string): Promise<void> {
+    const tempPath = `${filePath}.tmp.${randomBytes(8).toString('hex')}`;
+    try {
+      await writeFile(tempPath, content, 'utf-8');
+      await rename(tempPath, filePath);
+    } catch (error) {
+      try {
+        await rm(tempPath, { force: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+      throw error;
+    }
+  }
+
+  private async withLock<T>(projectPath: string, fn: () => Promise<T>): Promise<T> {
+    const lockKey = this.getProjectDir(projectPath);
+    
+    const existingLock = this.activeLocks.get(lockKey);
+    if (existingLock) {
+      await existingLock;
+    }
+    
+    let releaseLock: () => void;
+    const lockPromise = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    
+    this.activeLocks.set(lockKey, lockPromise);
+    
+    try {
+      return await fn();
+    } finally {
+      this.activeLocks.delete(lockKey);
+      releaseLock!();
+    }
+  }
+
   async writeMetadata(projectPath: string, metadata: ProjectMetadata): Promise<void> {
     await this.ensureDirectories(projectPath);
     const metadataPath = this.getMetadataPath(projectPath);
-    await writeFile(metadataPath, JSON.stringify(metadata, null, 2));
+    await this.atomicWrite(metadataPath, JSON.stringify(metadata, null, 2));
   }
 
   async initializeMetadata(projectPath: string, originUrl?: string): Promise<ProjectMetadata> {
@@ -90,32 +131,58 @@ export class DirectoryManager {
   }
 
   async addVariant(projectPath: string, variant: Variant, originUrl?: string): Promise<void> {
-    let metadata = await this.readMetadata(projectPath);
-    if (!metadata) {
-      metadata = await this.initializeMetadata(projectPath, originUrl);
-    }
+    await this.withLock(projectPath, async () => {
+      let metadata = await this.readMetadata(projectPath);
+      if (!metadata) {
+        metadata = await this.initializeMetadata(projectPath, originUrl);
+      }
 
-    metadata.variants.push(variant);
-    metadata.lastAccessedAt = new Date().toISOString();
-    await this.writeMetadata(projectPath, metadata);
+      metadata.variants.push(variant);
+      metadata.lastAccessedAt = new Date().toISOString();
+      await this.writeMetadata(projectPath, metadata);
+    });
+  }
+
+  async updateVariant(
+    projectPath: string, 
+    variantId: string, 
+    updater: (variant: Variant) => Variant
+  ): Promise<void> {
+    await this.withLock(projectPath, async () => {
+      const metadata = await this.readMetadata(projectPath);
+      if (!metadata) {
+        throw new Error('Project metadata not found');
+      }
+
+      const variantIndex = metadata.variants.findIndex(v => v.id === variantId);
+      if (variantIndex === -1) {
+        throw new Error(`Variant ${variantId} not found`);
+      }
+
+      metadata.variants[variantIndex] = updater(metadata.variants[variantIndex]);
+      metadata.lastAccessedAt = new Date().toISOString();
+      await this.writeMetadata(projectPath, metadata);
+    });
   }
 
   async removeVariant(projectPath: string, variantId: string): Promise<void> {
-    const metadata = await this.readMetadata(projectPath);
-    if (!metadata) {
-      return;
-    }
+    await this.withLock(projectPath, async () => {
+      const metadata = await this.readMetadata(projectPath);
+      if (!metadata) {
+        return;
+      }
 
-    metadata.variants = metadata.variants.filter(v => v.id !== variantId);
-    metadata.lastAccessedAt = new Date().toISOString();
-    await this.writeMetadata(projectPath, metadata);
+      metadata.variants = metadata.variants.filter(v => v.id !== variantId);
+      metadata.lastAccessedAt = new Date().toISOString();
+      await this.writeMetadata(projectPath, metadata);
 
-    const variantDir = this.getVariantDir(projectPath, variantId);
-    try {
-      await rm(variantDir, { recursive: true, force: true });
-    } catch (error) {
-      console.error(`Failed to remove variant directory: ${variantDir}`, error);
-    }
+      const variantDir = this.getVariantDir(projectPath, variantId);
+      try {
+        await rm(variantDir, { recursive: true, force: true });
+      } catch (error) {
+        console.error(`Failed to remove variant directory: ${variantDir}`, error);
+      }
+    });
   }
 
   async getNextVariantId(projectPath: string): Promise<string> {
