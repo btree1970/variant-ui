@@ -1,4 +1,4 @@
-import { DirectoryManager } from './src/git/directory.js';
+import { DirectoryManager } from '../src/git/directory.js';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { rm } from 'fs/promises';

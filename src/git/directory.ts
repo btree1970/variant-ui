@@ -120,7 +120,7 @@ export class DirectoryManager {
       schemaVersion: 1,
       projectPath,
       projectName: basename(projectPath),
-      originUrl,
+      ...(originUrl && { originUrl }),
       variants: [],
       createdAt: new Date().toISOString(),
       lastAccessedAt: new Date().toISOString(),
@@ -159,7 +159,12 @@ export class DirectoryManager {
         throw new Error(`Variant ${variantId} not found`);
       }
 
-      metadata.variants[variantIndex] = updater(metadata.variants[variantIndex]);
+      const variant = metadata.variants[variantIndex];
+      if (!variant) {
+        throw new Error(`Variant ${variantId} not found`);
+      }
+      
+      metadata.variants[variantIndex] = updater(variant);
       metadata.lastAccessedAt = new Date().toISOString();
       await this.writeMetadata(projectPath, metadata);
     });
