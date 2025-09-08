@@ -1,0 +1,119 @@
+import { readFile, writeFile, mkdir, rename, unlink } from 'fs/promises';
+import { join, basename } from 'path';
+import { createHash, randomBytes } from 'crypto';
+import type { Framework } from './framework.js';
+
+export interface ServerInfo {
+  variantId: string;
+  port: number;
+  pid: number;
+  framework: Framework;
+  startedAt: string;
+  healthy: boolean;
+  worktreePath: string;
+}
+
+export interface Registry {
+  servers: Record<string, ServerInfo>;
+  lastUpdated: string;
+}
+
+export class ServerRegistry {
+  private locks = new Map<string, Promise<void>>();
+
+  constructor(private baseDir: string) {}
+
+  private hashPath(projectPath: string): string {
+    return createHash('sha256').update(projectPath).digest('hex').slice(0, 12);
+  }
+
+  private getProjectDir(projectPath: string): string {
+    const projectName = basename(projectPath);
+    const hash = this.hashPath(projectPath);
+    return join(this.baseDir, 'variants', `${projectName}-${hash}`);
+  }
+
+  private registryPath(projectPath: string): string {
+    return join(this.getProjectDir(projectPath), 'registry.json');
+  }
+
+  private async withLock<T>(projectPath: string, fn: () => Promise<T>): Promise<T> {
+    const lockKey = this.registryPath(projectPath);
+
+    const existingLock = this.locks.get(lockKey);
+    if (existingLock) {
+      await existingLock;
+    }
+
+    let releaseLock: () => void;
+    const lockPromise = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+
+    this.locks.set(lockKey, lockPromise);
+
+    try {
+      return await fn();
+    } finally {
+      this.locks.delete(lockKey);
+      releaseLock!();
+    }
+  }
+
+  async read(projectPath: string): Promise<Registry> {
+    try {
+      const path = this.registryPath(projectPath);
+      const content = await readFile(path, 'utf-8');
+      return JSON.parse(content);
+    } catch {
+      return {
+        servers: {},
+        lastUpdated: new Date().toISOString(),
+      };
+    }
+  }
+
+  private async write(projectPath: string, registry: Registry): Promise<void> {
+    const path = this.registryPath(projectPath);
+    const dir = join(path, '..');
+
+    await mkdir(dir, { recursive: true });
+
+    registry.lastUpdated = new Date().toISOString();
+
+    const tempPath = `${path}.tmp.${randomBytes(8).toString('hex')}`;
+
+    try {
+      await writeFile(tempPath, JSON.stringify(registry, null, 2), 'utf-8');
+      await rename(tempPath, path);
+    } catch (error) {
+      try {
+        await unlink(tempPath);
+      } catch {
+        // Ignore
+      }
+      throw error;
+    }
+  }
+
+  async addServer(projectPath: string, info: ServerInfo): Promise<void> {
+    await this.withLock(projectPath, async () => {
+      const registry = await this.read(projectPath);
+      registry.servers[info.variantId] = info;
+      await this.write(projectPath, registry);
+    });
+  }
+
+  async removeServer(projectPath: string, variantId: string): Promise<void> {
+    await this.withLock(projectPath, async () => {
+      const registry = await this.read(projectPath);
+      delete registry.servers[variantId];
+      await this.write(projectPath, registry);
+    });
+  }
+
+  async getRunningServers(projectPath: string): Promise<ServerInfo[]> {
+    const registry = await this.read(projectPath);
+    return Object.values(registry.servers);
+  }
+}

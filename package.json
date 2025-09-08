@@ -33,6 +33,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.5",
     "simple-git": "^3.28.0",
+    "tree-kill": "^1.2.2",
     "zod": "^3.25.76"
   }
 }
