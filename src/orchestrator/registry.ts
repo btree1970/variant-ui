@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir, rename, unlink } from 'fs/promises';
-import { join, basename } from 'path';
+import { join, basename, dirname } from 'path';
 import { createHash, randomBytes } from 'crypto';
+import lockfile from 'proper-lockfile';
 import type { Framework } from './framework.js';
 
 export interface ServerInfo {
@@ -38,25 +39,43 @@ export class ServerRegistry {
   }
 
   private async withLock<T>(projectPath: string, fn: () => Promise<T>): Promise<T> {
-    const lockKey = this.registryPath(projectPath);
+    const regPath = this.registryPath(projectPath);
+    const dir = dirname(regPath);
 
-    const existingLock = this.locks.get(lockKey);
+    // Wait for any existing in-process lock
+    const existingLock = this.locks.get(dir);
     if (existingLock) {
       await existingLock;
     }
 
-    let releaseLock: () => void;
+    // Create new in-process lock
+    let releaseInProc: () => void;
     const lockPromise = new Promise<void>((resolve) => {
-      releaseLock = resolve;
+      releaseInProc = resolve;
     });
+    this.locks.set(dir, lockPromise);
 
-    this.locks.set(lockKey, lockPromise);
+    // Ensure directory exists for lockfile
+    await mkdir(dir, { recursive: true });
+
+    // Acquire cross-process lock
+    const releaseFs = await lockfile.lock(dir, {
+      lockfilePath: join(dir, 'registry.lock'),
+      stale: 30000,
+      retries: {
+        retries: 12,
+        factor: 1.2,
+        minTimeout: 40,
+        maxTimeout: 400,
+      },
+    });
 
     try {
       return await fn();
     } finally {
-      this.locks.delete(lockKey);
-      releaseLock!();
+      await releaseFs();
+      this.locks.delete(dir);
+      releaseInProc!();
     }
   }
 
@@ -75,7 +94,7 @@ export class ServerRegistry {
 
   private async write(projectPath: string, registry: Registry): Promise<void> {
     const path = this.registryPath(projectPath);
-    const dir = join(path, '..');
+    const dir = dirname(path);
 
     await mkdir(dir, { recursive: true });
 
@@ -84,7 +103,10 @@ export class ServerRegistry {
     const tempPath = `${path}.tmp.${randomBytes(8).toString('hex')}`;
 
     try {
-      await writeFile(tempPath, JSON.stringify(registry, null, 2), 'utf-8');
+      await writeFile(tempPath, JSON.stringify(registry, null, 2), {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
       await rename(tempPath, path);
     } catch (error) {
       try {

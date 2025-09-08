@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { createServer } from 'net';
+import { createServer, type Server } from 'net';
 
 const GLOBAL_BASE = 42000;
 const RANGE_SIZE = 1000;
@@ -56,4 +56,67 @@ export async function allocatePort(projectKey: string, variantId: string): Promi
   }
 
   throw new Error(`No available ports in range ${base}-${maxPort} for project ${projectKey}`);
+}
+
+export interface PortReservation {
+  port: number;
+  release: () => Promise<void>;
+}
+
+export async function allocatePortWithReservation(
+  projectKey: string,
+  variantId: string
+): Promise<PortReservation> {
+  const preferred = portForVariant(projectKey, variantId);
+
+  // Try to reserve the preferred port
+  const server = await tryReservePort(preferred);
+  if (server) {
+    return {
+      port: preferred,
+      release: async () => {
+        await closeServer(server);
+      },
+    };
+  }
+
+  // Scan for available port in range
+  const base = projectBasePort(projectKey);
+  const maxPort = base + RANGE_SIZE;
+
+  for (let port = base + 1; port < maxPort; port++) {
+    const portServer = await tryReservePort(port);
+    if (portServer) {
+      return {
+        port,
+        release: async () => {
+          await closeServer(portServer);
+        },
+      };
+    }
+  }
+
+  throw new Error(`No available ports in range ${base}-${maxPort} for project ${projectKey}`);
+}
+
+async function tryReservePort(port: number): Promise<Server | null> {
+  return new Promise((resolve) => {
+    const server = createServer();
+
+    server.once('error', () => {
+      resolve(null);
+    });
+
+    server.once('listening', () => {
+      resolve(server);
+    });
+
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+async function closeServer(server: Server): Promise<void> {
+  return new Promise((resolve) => {
+    server.close(() => resolve());
+  });
 }
