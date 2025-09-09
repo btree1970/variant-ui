@@ -7,11 +7,30 @@ import { tmpdir } from 'os';
 import { randomBytes } from 'crypto';
 import { simpleGit } from 'simple-git';
 import { execSync } from 'child_process';
+import { existsSync } from 'fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitForDependencies(variantPath: string, maxWaitSeconds: number = 30): Promise<boolean> {
+  // npm writes node_modules/.package-lock.json at the very end of install
+  const lockMarker = join(variantPath, 'node_modules', '.package-lock.json');
+  
+  console.log(`   ⏳ Waiting for npm install to complete...`);
+  
+  for (let i = 0; i < maxWaitSeconds; i++) {
+    if (existsSync(lockMarker)) {
+      console.log(`   ✅ Dependencies installed after ${i}s`);
+      return true;
+    }
+    await sleep(1000);
+  }
+  
+  console.log(`   ⚠️ Dependencies not ready after ${maxWaitSeconds}s`);
+  return false;
 }
 
 async function setupTestRepo(): Promise<string> {
@@ -72,6 +91,10 @@ async function testE2EVariantServer() {
     
     // Test 3: Start dev server for variant 1
     console.log('📌 Test 3: Start dev server for variant 1');
+    
+    // Wait for npm install to complete
+    await waitForDependencies(variant1.path);
+    
     const startTime1 = Date.now();
     const preview1 = await manager.startPreview(variant1.variantId);
     const elapsed1 = Date.now() - startTime1;
@@ -117,6 +140,10 @@ async function testE2EVariantServer() {
     
     // Test 6: Start dev server for variant 2
     console.log('📌 Test 6: Start dev server for variant 2');
+    
+    // Wait for npm install to complete
+    await waitForDependencies(variant2.path);
+    
     const startTime2 = Date.now();
     const preview2 = await manager.startPreview(variant2.variantId);
     const elapsed2 = Date.now() - startTime2;

@@ -130,20 +130,32 @@ export class WorktreeManager {
       const log = await worktreeGit.log({ maxCount: 1 });
       const baseCommit = log.latest?.hash || '';
 
-      // Install dependencies for the variant
-      // For now, we're doing a fresh npm install for each variant to ensure it works
-      // Install dependencies for the variant
-      const { execSync } = await import('child_process');
+      // Install dependencies in the background for the variant
+      // This runs npm install without blocking variant creation
+      const { spawn } = await import('child_process');
+      const { existsSync } = await import('fs');
+      const { join } = await import('path');
 
-      try {
-        execSync('npm install', {
+      const variantNodeModules = join(worktreePath, 'node_modules');
+      const variantPackageJson = join(worktreePath, 'package.json');
+
+      // Only install if package.json exists and node_modules doesn't
+      if (existsSync(variantPackageJson) && !existsSync(variantNodeModules)) {
+        console.log(`Installing dependencies in background for variant ${variantId}...`);
+
+        // Run npm install in the background
+        const installProcess = spawn('npm', ['install'], {
           cwd: worktreePath,
+          detached: true,
           stdio: 'ignore',
           env: process.env,
-          timeout: 120000, // 2 minute timeout for install
         });
-      } catch {
-        // Continue anyway - user can manually install if needed
+
+        // Unreference the process so it can continue after parent exits
+        installProcess.unref();
+
+        // Log PID for debugging
+        console.log(`Background npm install started (PID: ${installProcess.pid})`);
       }
 
       // Update the placeholder variant with full details

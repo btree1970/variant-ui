@@ -3,6 +3,8 @@ import { EventEmitter } from 'events';
 import { FrameworkRegistry } from './adapters/index.js';
 import { allocatePort } from './ports.js';
 import type { FrameworkAdapter } from './adapters/base.js';
+import { existsSync } from 'fs';
+import { join } from 'path';
 
 export interface DevServerInfo {
   variantId: string;
@@ -42,6 +44,9 @@ class DevServer extends EventEmitter {
 
   async start(): Promise<DevServerInfo> {
     try {
+      // Wait for npm install to complete if it's still running
+      await this.waitForDependencies();
+
       const registry = new FrameworkRegistry();
       const adapter = await registry.detectFramework(this.options.projectPath);
 
@@ -141,6 +146,33 @@ class DevServer extends EventEmitter {
         this.cleanup();
       }
     });
+  }
+
+  private async waitForDependencies(maxWaitSeconds: number = 60): Promise<void> {
+    // Check if npm install is complete by looking for the lock marker
+    const lockMarker = join(this.options.projectPath, 'node_modules', '.package-lock.json');
+
+    // If node_modules already exists with the lock marker, dependencies are ready
+    if (existsSync(lockMarker)) {
+      return;
+    }
+
+    console.log(`Waiting for npm install to complete in ${this.options.projectPath}...`);
+
+    const startTime = Date.now();
+    while (Date.now() - startTime < maxWaitSeconds * 1000) {
+      if (existsSync(lockMarker)) {
+        console.log(`Dependencies ready for variant ${this.options.variantId}`);
+        return;
+      }
+
+      // Wait 500ms before checking again
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    throw new Error(
+      `Dependencies not ready after ${maxWaitSeconds} seconds. npm install may have failed.`
+    );
   }
 
   private startHealthCheck(): void {
