@@ -2,13 +2,12 @@ import { readFile, writeFile, mkdir, rename, unlink } from 'fs/promises';
 import { join, basename, dirname } from 'path';
 import { createHash, randomBytes } from 'crypto';
 import lockfile from 'proper-lockfile';
-import type { Framework } from './framework.js';
 
 export interface ServerInfo {
   variantId: string;
   port: number;
   pid: number;
-  framework: Framework;
+  framework: string;
   startedAt: string;
   healthy: boolean;
   worktreePath: string;
