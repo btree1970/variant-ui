@@ -6,8 +6,7 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { WorktreeManager } from '../git/worktree.js';
-import { DirectoryManager } from '../git/directory.js';
+import { VariantManager } from '../variant-manager.js';
 import { simpleGit } from 'simple-git';
 import { realpath } from 'fs/promises';
 import {
@@ -16,18 +15,19 @@ import {
   RemoveVariationSchema,
   ApplyPatchSchema,
   CheckStatusSchema,
+  StartPreviewSchema,
+  StopPreviewSchema,
+  PreviewStatusSchema,
 } from './validation.js';
 
 export class MCPServer {
   private server: Server;
   private workingDirectory: string;
   private gitRoot?: string;
-  private worktreeManager?: WorktreeManager;
-  private directoryManager: DirectoryManager;
+  private variantManager?: VariantManager;
 
   constructor(workingDirectory?: string) {
     this.workingDirectory = workingDirectory || process.cwd();
-    this.directoryManager = new DirectoryManager();
 
     this.server = new Server(
       {
@@ -59,12 +59,12 @@ export class MCPServer {
     return this.gitRoot;
   }
 
-  private async getWorktreeManager(): Promise<WorktreeManager> {
-    if (!this.worktreeManager) {
+  private async getVariantManager(): Promise<VariantManager> {
+    if (!this.variantManager) {
       const gitRoot = await this.getGitRoot();
-      this.worktreeManager = new WorktreeManager(gitRoot, this.directoryManager);
+      this.variantManager = new VariantManager(gitRoot);
     }
-    return this.worktreeManager;
+    return this.variantManager;
   }
 
   private setupHandlers() {
@@ -139,6 +139,42 @@ export class MCPServer {
               properties: {},
             },
           },
+          {
+            name: 'start_preview',
+            description: 'Start a development server for a UI variation',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                variantId: {
+                  type: 'string',
+                  description: 'ID of the variation to preview',
+                },
+              },
+              required: ['variantId'],
+            },
+          },
+          {
+            name: 'stop_preview',
+            description: 'Stop the development server for a UI variation',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                variantId: {
+                  type: 'string',
+                  description: 'ID of the variation to stop previewing',
+                },
+              },
+              required: ['variantId'],
+            },
+          },
+          {
+            name: 'preview_status',
+            description: 'Get the status of all preview servers',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+            },
+          },
         ],
       };
     });
@@ -164,6 +200,15 @@ export class MCPServer {
           case 'check_status':
             return await this.handleCheckStatus(args);
 
+          case 'start_preview':
+            return await this.handleStartPreview(args);
+
+          case 'stop_preview':
+            return await this.handleStopPreview(args);
+
+          case 'preview_status':
+            return await this.handlePreviewStatus(args);
+
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -181,8 +226,8 @@ export class MCPServer {
 
     // Handle resource listing
     this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
-      const gitRoot = await this.getGitRoot();
-      const metadata = await this.directoryManager.readMetadata(gitRoot);
+      const vm = await this.getVariantManager();
+      const variants = await vm.listVariants();
 
       const resources = [
         {
@@ -193,15 +238,13 @@ export class MCPServer {
         },
       ];
 
-      if (metadata?.variants) {
-        for (const variant of metadata.variants) {
-          resources.push({
-            uri: `variant://${variant.id}`,
-            name: `Variation ${variant.id}`,
-            description: variant.description || variant.branch,
-            mimeType: 'application/json',
-          });
-        }
+      for (const variant of variants) {
+        resources.push({
+          uri: `variant://${variant.id}`,
+          name: `Variation ${variant.id}`,
+          description: variant.description || variant.branch,
+          mimeType: 'application/json',
+        });
       }
 
       return { resources };
@@ -212,14 +255,14 @@ export class MCPServer {
       const { uri } = request.params;
 
       if (uri === 'variant://list') {
-        const gitRoot = await this.getGitRoot();
-        const metadata = await this.directoryManager.readMetadata(gitRoot);
+        const vm = await this.getVariantManager();
+        const variants = await vm.listVariants();
         return {
           contents: [
             {
               uri,
               mimeType: 'application/json',
-              text: JSON.stringify(metadata?.variants || [], null, 2),
+              text: JSON.stringify(variants, null, 2),
             },
           ],
         };
@@ -227,11 +270,10 @@ export class MCPServer {
 
       if (uri.startsWith('variant://')) {
         const variantId = uri.replace('variant://', '');
-        const gitRoot = await this.getGitRoot();
-        const metadata = await this.directoryManager.readMetadata(gitRoot);
-        const variant = metadata?.variants.find((v) => v.id === variantId);
+        const vm = await this.getVariantManager();
+        const status = await vm.getVariantStatus(variantId);
 
-        if (!variant) {
+        if (!status) {
           throw new Error(`Variant ${variantId} not found`);
         }
 
@@ -240,7 +282,7 @@ export class MCPServer {
             {
               uri,
               mimeType: 'application/json',
-              text: JSON.stringify(variant, null, 2),
+              text: JSON.stringify(status, null, 2),
             },
           ],
         };
@@ -254,36 +296,28 @@ export class MCPServer {
     const input = CreateVariationSchema.parse(args);
     const { baseRef, description } = input;
 
-    const wm = await this.getWorktreeManager();
+    const vm = await this.getVariantManager();
 
-    // Check working directory status
-    const status = await wm.checkWorkingDirectory();
-    let warningMessage = '';
-    if (!status.isClean) {
-      warningMessage = `Warning: ${status.message}\n\n`;
-    }
-
-    // Create the worktree
-    const result = await wm.createWorktree(baseRef, description);
+    // Create the variant
+    const result = await vm.createVariant(baseRef || 'HEAD', description);
 
     return {
       content: [
         {
           type: 'text',
-          text: `${warningMessage}Created variation ${result.variantId}:
+          text: `Created variation ${result.variantId}:
 - Branch: ${result.branch}
 - Path: ${result.path}
 - Base commit: ${result.baseCommit}
 - Description: ${description}
 
-You can now apply changes to this variation using the apply_patch tool.`,
+You can now apply changes to this variation using the apply_patch tool or start a preview server.`,
         },
         {
           type: 'text',
           text: JSON.stringify(
             {
               success: true,
-              warning: !status.isClean ? status.message : undefined,
               data: {
                 variantId: result.variantId,
                 branch: result.branch,
@@ -302,12 +336,10 @@ You can now apply changes to this variation using the apply_patch tool.`,
 
   private async handleListVariations(args: unknown = {}) {
     ListVariationsSchema.parse(args);
-    const gitRoot = await this.getGitRoot();
-    const metadata = await this.directoryManager.readMetadata(gitRoot);
-    const wm = await this.getWorktreeManager();
-    const managedWorktrees = await wm.listManagedWorktrees();
+    const vm = await this.getVariantManager();
+    const statuses = await vm.getStatus();
 
-    if (!metadata?.variants || metadata.variants.length === 0) {
+    if (statuses.length === 0) {
       return {
         content: [
           {
@@ -322,26 +354,15 @@ You can now apply changes to this variation using the apply_patch tool.`,
       };
     }
 
-    const variantsWithStatus = metadata.variants.map((variant) => {
-      const worktree = managedWorktrees.find((w) => w.variantId === variant.id);
-      return {
-        ...variant,
-        hasWorktree: !!worktree,
-        worktreePath: worktree?.path,
-      };
-    });
+    let output = `Active variations (${statuses.length}):\n\n`;
 
-    let output = `Active variations (${metadata.variants.length}):\n\n`;
-
-    for (const variant of variantsWithStatus) {
-      const status = variant.hasWorktree ? '🟢 Active' : '⚠️  No worktree';
-
+    for (const variant of statuses) {
       output += `${variant.id}: ${variant.description || 'No description'}\n`;
-      output += `  Status: ${status}\n`;
       output += `  Branch: ${variant.branch}\n`;
+      output += `  Path: ${variant.path}\n`;
       output += `  Created: ${new Date(variant.createdAt).toLocaleString()}\n`;
-      if (variant.port) {
-        output += `  Dev server port: ${variant.port}\n`;
+      if (variant.server) {
+        output += `  🚀 Server: http://127.0.0.1:${variant.server.port} (${variant.server.status})\n`;
       }
       output += '\n';
     }
@@ -354,7 +375,7 @@ You can now apply changes to this variation using the apply_patch tool.`,
         },
         {
           type: 'text',
-          text: JSON.stringify({ success: true, data: variantsWithStatus }, null, 2),
+          text: JSON.stringify({ success: true, data: statuses }, null, 2),
         },
       ],
     };
@@ -364,8 +385,8 @@ You can now apply changes to this variation using the apply_patch tool.`,
     const input = RemoveVariationSchema.parse(args);
     const { variantId } = input;
 
-    const wm = await this.getWorktreeManager();
-    await wm.removeWorktree(variantId);
+    const vm = await this.getVariantManager();
+    await vm.removeVariant(variantId);
 
     return {
       content: [
@@ -392,8 +413,8 @@ You can now apply changes to this variation using the apply_patch tool.`,
     const input = ApplyPatchSchema.parse(args);
     const { variantId, patch } = input;
 
-    const wm = await this.getWorktreeManager();
-    await wm.applyPatchToWorktree(variantId, patch);
+    const vm = await this.getVariantManager();
+    await vm.applyPatch(variantId, patch);
 
     return {
       content: [
@@ -418,37 +439,22 @@ You can now apply changes to this variation using the apply_patch tool.`,
 
   private async handleCheckStatus(args: unknown = {}) {
     CheckStatusSchema.parse(args);
-    const wm = await this.getWorktreeManager();
-    const status = await wm.checkWorkingDirectory();
-    const branch = await wm.getCurrentBranch();
-    const origin = await wm.getOriginUrl();
     const gitRoot = await this.getGitRoot();
-    const metadata = await this.directoryManager.readMetadata(gitRoot);
+    const git = simpleGit(gitRoot);
+    const branch = await git.revparse(['--abbrev-ref', 'HEAD']);
+    const vm = await this.getVariantManager();
+    const variants = await vm.listVariants();
 
     const statusData = {
       gitRoot,
-      currentBranch: branch,
-      workingDirectory: {
-        isClean: status.isClean,
-        ...(status.message && { message: status.message }),
-      },
-      ...(origin && { origin: origin.fetch }),
-      activeVariations: metadata?.variants?.length || 0,
+      currentBranch: branch.trim(),
+      activeVariations: variants.length,
     };
 
     let output = `Git Repository Status:\n`;
-    output += `- Current branch: ${branch}\n`;
-    output += `- Working directory: ${status.isClean ? '✅ Clean' : '⚠️  Has changes'}\n`;
-    if (!status.isClean && status.message) {
-      output += `  ${status.message}\n`;
-    }
-    if (origin) {
-      output += `- Origin: ${origin.fetch}\n`;
-    }
-
-    if (metadata?.variants && metadata.variants.length > 0) {
-      output += `- Active variations: ${metadata.variants.length}\n`;
-    }
+    output += `- Current branch: ${branch.trim()}\n`;
+    output += `- Git root: ${gitRoot}\n`;
+    output += `- Active variations: ${variants.length}\n`;
 
     return {
       content: [
@@ -459,6 +465,95 @@ You can now apply changes to this variation using the apply_patch tool.`,
         {
           type: 'text',
           text: JSON.stringify({ success: true, data: statusData }, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleStartPreview(args: unknown) {
+    const input = StartPreviewSchema.parse(args);
+    const { variantId } = input;
+
+    const vm = await this.getVariantManager();
+    const preview = await vm.startPreview(variantId);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Started preview server for variation ${variantId}:
+- URL: ${preview.url}
+- Port: ${preview.port}
+- Framework: ${preview.framework}
+- Status: ${preview.status}`,
+        },
+        {
+          type: 'text',
+          text: JSON.stringify({ success: true, data: preview }, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleStopPreview(args: unknown) {
+    const input = StopPreviewSchema.parse(args);
+    const { variantId } = input;
+
+    const vm = await this.getVariantManager();
+    await vm.stopPreview(variantId);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Stopped preview server for variation ${variantId}`,
+        },
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              success: true,
+              data: { variantId, stopped: true },
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+
+  private async handlePreviewStatus(args: unknown = {}) {
+    PreviewStatusSchema.parse(args);
+    const vm = await this.getVariantManager();
+    const statuses = await vm.getStatus();
+    const serversRunning = statuses.filter((s) => s.server);
+
+    let output = `Preview Server Status:\n\n`;
+
+    if (serversRunning.length === 0) {
+      output += 'No preview servers running\n';
+    } else {
+      for (const variant of serversRunning) {
+        if (variant.server) {
+          output += `Variation ${variant.id}:\n`;
+          output += `  URL: http://127.0.0.1:${variant.server.port}\n`;
+          output += `  Framework: ${variant.server.framework}\n`;
+          output += `  Status: ${variant.server.status}\n`;
+          output += `  Started: ${new Date(variant.server.startedAt).toLocaleString()}\n\n`;
+        }
+      }
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: output,
+        },
+        {
+          type: 'text',
+          text: JSON.stringify({ success: true, data: serversRunning }, null, 2),
         },
       ],
     };

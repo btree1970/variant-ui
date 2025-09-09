@@ -62,6 +62,13 @@ class DevServer extends EventEmitter {
       const portArgs = adapter.getPortArgs(this.port.port);
       const envVars = adapter.getEnvVars(this.port.port);
 
+      // Ensure nvm paths are included for npm/node access
+      const nvmPath = '/Users/beakalteshome/.nvm/versions/node/v21.7.3/bin';
+      const currentPath = process.env.PATH || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+      const enhancedPath = currentPath.includes(nvmPath)
+        ? currentPath
+        : `${nvmPath}:${currentPath}`;
+
       this.process = spawn(startCommand, portArgs, {
         cwd: this.options.projectPath,
         env: {
@@ -69,9 +76,10 @@ class DevServer extends EventEmitter {
           ...envVars,
           HOST: '127.0.0.1',
           BROWSER: 'none',
+          PATH: enhancedPath,
         },
         stdio: ['ignore', 'pipe', 'pipe'], // Don't keep stdin open
-        shell: process.platform === 'win32',
+        shell: true, // Always use shell to ensure PATH resolution
       });
 
       this.setupProcessHandlers();
