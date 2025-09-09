@@ -44,7 +44,7 @@ export class NextJsAdapter implements FrameworkAdapter {
   }
 
   getReadyPattern(): RegExp | null {
-    return /ready on|started server on|ready -/i;
+    return /ready on|started server on|ready -|✓ Ready in/i;
   }
 
   getHealthCheckUrl(port: number): string {

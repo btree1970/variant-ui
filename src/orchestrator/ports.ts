@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { createServer, type Server } from 'net';
+import { createServer, type Server, type Socket } from 'net';
 
 const GLOBAL_BASE = 42000;
 const RANGE_SIZE = 1000;
@@ -99,9 +99,24 @@ export async function allocatePortWithReservation(
   throw new Error(`No available ports in range ${base}-${maxPort} for project ${projectKey}`);
 }
 
+// Track connections for each server
+const serverConnections = new WeakMap<Server, Set<Socket>>();
+
 async function tryReservePort(port: number): Promise<Server | null> {
   return new Promise((resolve) => {
     const server = createServer();
+    const connections = new Set<Socket>();
+
+    // Store connections for this server
+    serverConnections.set(server, connections);
+
+    // Track all connections
+    server.on('connection', (socket) => {
+      connections.add(socket);
+      socket.once('close', () => {
+        connections.delete(socket);
+      });
+    });
 
     server.once('error', () => {
       resolve(null);
@@ -117,6 +132,19 @@ async function tryReservePort(port: number): Promise<Server | null> {
 
 async function closeServer(server: Server): Promise<void> {
   return new Promise((resolve) => {
-    server.close(() => resolve());
+    // Destroy all active connections first
+    const connections = serverConnections.get(server);
+    if (connections) {
+      for (const socket of connections) {
+        socket.destroy();
+      }
+      connections.clear();
+    }
+
+    // Now close the server
+    server.close(() => {
+      serverConnections.delete(server);
+      resolve();
+    });
   });
 }
