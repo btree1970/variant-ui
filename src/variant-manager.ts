@@ -1,10 +1,6 @@
 import { WorktreeManager, type CreateWorktreeResult } from './git/worktree.js';
 import { DirectoryManager } from './git/directory.js';
-import {
-  DevServerManager,
-  type DevServerInfo,
-  type DevServerOptions,
-} from './orchestrator/dev-server.js';
+import { DevServerManager, type DevServerInfo } from './orchestrator/dev-server.js';
 import { createHash } from 'crypto';
 import type { Variant } from './types.js';
 

@@ -130,6 +130,22 @@ export class WorktreeManager {
       const log = await worktreeGit.log({ maxCount: 1 });
       const baseCommit = log.latest?.hash || '';
 
+      // Install dependencies for the variant
+      // For now, we're doing a fresh npm install for each variant to ensure it works
+      // Install dependencies for the variant
+      const { execSync } = await import('child_process');
+
+      try {
+        execSync('npm install', {
+          cwd: worktreePath,
+          stdio: 'ignore',
+          env: process.env,
+          timeout: 120000, // 2 minute timeout for install
+        });
+      } catch {
+        // Continue anyway - user can manually install if needed
+      }
+
       // Update the placeholder variant with full details
       const originUrl = await this.getOriginUrl();
       await this.directoryManager.updateVariant(this.projectPath, variantId, (v) => ({

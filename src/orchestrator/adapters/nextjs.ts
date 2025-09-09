@@ -28,13 +28,15 @@ export class NextJsAdapter implements FrameworkAdapter {
   }
 
   getPortArgs(port: number): string[] {
-    return ['run', 'dev', '--', '-p', String(port)];
+    // Include -H to force IPv4 binding
+    return ['run', 'dev', '--', '-p', String(port), '-H', '127.0.0.1'];
   }
 
   getEnvVars(port: number): Record<string, string> {
     return {
       ...process.env,
       PORT: String(port),
+      HOSTNAME: '127.0.0.1', // Force IPv4
       NODE_ENV: 'development',
     };
   }
@@ -51,7 +53,7 @@ export class NextJsAdapter implements FrameworkAdapter {
     return `http://127.0.0.1:${port}`;
   }
 
-  validateHealth(response: unknown): boolean {
+  validateHealth(_response: unknown): boolean {
     // For Next.js, any response (including 404) means the server is up
     return true;
   }

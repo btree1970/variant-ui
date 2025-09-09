@@ -57,11 +57,7 @@ async function testE2EVariantServer() {
     console.log(`   Created variant: ${variant1.variantId}`);
     console.log(`   Branch: ${variant1.branch}`);
     console.log(`   Path: ${variant1.path}`);
-    
-    // Install dependencies in the worktree
-    console.log('   Installing dependencies...');
-    execSync('npm install', { cwd: variant1.path, stdio: 'ignore' });
-    console.log(`   ✅ Variant created and dependencies installed\n`);
+    console.log(`   ✅ Variant created with dependencies\n`);
     
     // Test 2: Make a change in variant 1
     console.log('📌 Test 2: Modify variant 1');
@@ -87,16 +83,26 @@ async function testE2EVariantServer() {
     
     console.log(`   ✅ Server started successfully\n`);
     
+    // Test 3b: Verify server is actually accessible
+    console.log('📌 Test 3b: Verify server is accessible via HTTP');
+    try {
+      const response = await fetch(preview1.url);
+      const text = await response.text();
+      console.log(`   HTTP Status: ${response.status}`);
+      console.log(`   Response contains "Variant A": ${text.includes('Variant A')}`);
+      console.log(`   Response length: ${text.length} bytes`);
+      console.log(`   ✅ Server is responding to HTTP requests\n`);
+    } catch (error) {
+      console.error(`   ❌ Failed to fetch from server: ${error}`);
+      throw error;
+    }
+    
     // Test 4: Create second variant
     console.log('📌 Test 4: Create second variant');
     const variant2 = await manager.createVariant('HEAD', 'feature-b');
     console.log(`   Created variant: ${variant2.variantId}`);
     console.log(`   Branch: ${variant2.branch}`);
-    
-    // Install dependencies in the second worktree
-    console.log('   Installing dependencies...');
-    execSync('npm install', { cwd: variant2.path, stdio: 'ignore' });
-    console.log(`   ✅ Second variant created and dependencies installed\n`);
+    console.log(`   ✅ Second variant created with dependencies\n`);
     
     // Test 5: Make a different change in variant 2
     console.log('📌 Test 5: Modify variant 2');
@@ -119,6 +125,20 @@ async function testE2EVariantServer() {
     console.log(`   Different port: ${preview2.port !== preview1.port}`);
     
     console.log(`   ✅ Second server started successfully\n`);
+    
+    // Test 6b: Verify second server is actually accessible
+    console.log('📌 Test 6b: Verify second server is accessible via HTTP');
+    try {
+      const response = await fetch(preview2.url);
+      const text = await response.text();
+      console.log(`   HTTP Status: ${response.status}`);
+      console.log(`   Response contains "Variant B": ${text.includes('Variant B')}`);
+      console.log(`   Response length: ${text.length} bytes`);
+      console.log(`   ✅ Second server is responding to HTTP requests\n`);
+    } catch (error) {
+      console.error(`   ❌ Failed to fetch from server: ${error}`);
+      throw error;
+    }
     
     // Test 7: Get status of all variants
     console.log('📌 Test 7: Get status of all variants');

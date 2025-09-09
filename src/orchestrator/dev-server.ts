@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import { FrameworkRegistry } from './adapters/index.js';
-import { allocatePortWithReservation, type PortReservation } from './ports.js';
+import { allocatePort } from './ports.js';
 import type { FrameworkAdapter } from './adapters/base.js';
 
 export interface DevServerInfo {
@@ -24,13 +24,11 @@ export interface DevServerOptions {
   onStop?: () => void;
 }
 
-const START_TIMEOUT_MS = process.env.START_TIMEOUT_MS
-  ? parseInt(process.env.START_TIMEOUT_MS)
-  : 60000;
+const START_TIMEOUT_MS = 60000;
 
 class DevServer extends EventEmitter {
   private process?: ChildProcess;
-  private port: PortReservation | undefined;
+  private port: number = 0;
   private adapter?: FrameworkAdapter;
   private status: DevServerInfo['status'] = 'starting';
   private startedAt: Date;
@@ -53,34 +51,30 @@ class DevServer extends EventEmitter {
 
       this.adapter = adapter;
 
-      this.port = await allocatePortWithReservation(
-        this.options.projectKey,
-        this.options.variantId
-      );
+      // Simply allocate an available port
+      this.port = await allocatePort(this.options.projectKey, this.options.variantId);
 
       const startCommand = adapter.getStartCommand();
-      const portArgs = adapter.getPortArgs(this.port.port);
-      const envVars = adapter.getEnvVars(this.port.port);
-
-      // Ensure nvm paths are included for npm/node access
-      const nvmPath = '/Users/beakalteshome/.nvm/versions/node/v21.7.3/bin';
-      const currentPath = process.env.PATH || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
-      const enhancedPath = currentPath.includes(nvmPath)
-        ? currentPath
-        : `${nvmPath}:${currentPath}`;
+      const portArgs = adapter.getPortArgs(this.port);
+      const envVars = adapter.getEnvVars(this.port);
 
       this.process = spawn(startCommand, portArgs, {
         cwd: this.options.projectPath,
         env: {
           ...process.env,
           ...envVars,
-          HOST: '127.0.0.1',
+          HOSTNAME: '127.0.0.1', // Force IPv4
+          PORT: String(this.port),
           BROWSER: 'none',
-          PATH: enhancedPath,
         },
-        stdio: ['ignore', 'pipe', 'pipe'], // Don't keep stdin open
-        shell: true, // Always use shell to ensure PATH resolution
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: false,
       });
+
+      // End stdin to prevent blocking on interactive prompts
+      if (this.process.stdin) {
+        this.process.stdin.end();
+      }
 
       this.setupProcessHandlers();
       this.startHealthCheck();
@@ -117,21 +111,13 @@ class DevServer extends EventEmitter {
 
     this.process.stdout?.on('data', (data) => {
       const output = data.toString();
-      // TODO: Add proper logging
-      // console.log(`[${this.options.variantId}] ${output}`);
 
       if (readyPattern && readyPattern.test(output) && this.status === 'starting') {
         this.handleReady();
       }
     });
 
-    this.process.stderr?.on('data', (_data) => {
-      // TODO: Add proper error logging
-      // console.error(`[${this.options.variantId}] ${_data}`);
-    });
-
     this.process.on('error', (error) => {
-      // Clear timers on error too
       clearTimeout(this.readyTimeout);
       clearInterval(this.healthCheckInterval);
       this.emit('error', error);
@@ -139,7 +125,6 @@ class DevServer extends EventEmitter {
     });
 
     this.process.on('exit', (code, signal) => {
-      // Clear all timers immediately to prevent hanging
       clearTimeout(this.readyTimeout);
       clearInterval(this.healthCheckInterval);
 
@@ -163,9 +148,9 @@ class DevServer extends EventEmitter {
 
     const checkHealth = async () => {
       try {
-        const url = this.adapter!.getHealthCheckUrl(this.port!.port);
+        const url = this.adapter!.getHealthCheckUrl(this.port);
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1500);
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s for first compile
 
         try {
           const response = await fetch(url, { signal: controller.signal });
@@ -264,26 +249,20 @@ class DevServer extends EventEmitter {
     // Clear all timers (belt and suspenders)
     clearTimeout(this.readyTimeout);
     clearInterval(this.healthCheckInterval);
-
-    // Release port reservation
-    if (this.port) {
-      await this.port.release();
-      this.port = undefined;
-    }
   }
 
   getInfo(): DevServerInfo {
     const info: DevServerInfo = {
       variantId: this.options.variantId,
       projectPath: this.options.projectPath,
-      port: this.port?.port || 0,
+      port: this.port,
       framework: this.adapter?.name || 'unknown',
       status: this.status,
       startedAt: this.startedAt,
     };
 
-    if (this.port) {
-      info.url = `http://127.0.0.1:${this.port.port}`;
+    if (this.port > 0) {
+      info.url = `http://127.0.0.1:${this.port}`;
     }
 
     if (this.status === 'failed') {
