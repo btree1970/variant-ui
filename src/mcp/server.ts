@@ -580,6 +580,32 @@ You can now cd into ${result.path} to make changes directly, or start a preview 
     this.startReviewUI();
   }
 
+  async shutdown() {
+    console.error('Stopping all dev servers...');
+
+    // Stop all dev servers to prevent orphaned processes
+    if (this.variantManager) {
+      await this.variantManager.stopAllServers();
+    }
+
+    this.sseClients.forEach((client) => {
+      try {
+        client.end();
+      } catch {
+        // Ignore errors
+      }
+    });
+    this.sseClients.clear();
+
+    if (this.httpServer) {
+      await new Promise<void>((resolve) => {
+        this.httpServer!.close(() => resolve());
+      });
+    }
+
+    console.error('All servers stopped');
+  }
+
   private startReviewUI() {
     this.httpServer = createServer((req, res) => {
       this.handleHttpRequest(req, res);
