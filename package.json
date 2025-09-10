@@ -1,9 +1,17 @@
 {
   "name": "variant-ui",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "MCP server for rapid UI iteration - create and compare multiple UI variants side-by-side",
+  "main": "dist/index.js",
   "type": "module",
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/btree1970/variant-ui.git"
+  },
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
@@ -13,11 +21,12 @@
     "lint:fix": "eslint src/**/*.ts --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "prepare": "husky"
+    "prepare": "husky",
+    "prepublishOnly": "npm run build"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": ["mcp", "ui", "variants", "testing", "development", "claude", "ai"],
+  "author": "btree1970",
+  "license": "MIT",
   "devDependencies": {
     "@eslint/js": "^9.35.0",
     "@types/eslint__js": "^9.14.0",
