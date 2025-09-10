@@ -1,6 +1,6 @@
 {
   "name": "variant-ui",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP server for rapid UI iteration - create and compare multiple UI variants side-by-side",
   "main": "dist/index.js",
   "type": "module",
@@ -24,7 +24,15 @@
     "prepare": "husky",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["mcp", "ui", "variants", "testing", "development", "claude", "ai"],
+  "keywords": [
+    "mcp",
+    "ui",
+    "variants",
+    "testing",
+    "development",
+    "claude",
+    "ai"
+  ],
   "author": "btree1970",
   "license": "MIT",
   "devDependencies": {
