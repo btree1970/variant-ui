@@ -1,11 +1,11 @@
-import { homedir } from 'os';
+import { tmpdir } from 'os';
 import { join, basename } from 'path';
 import { createHash, randomBytes } from 'crypto';
 import { mkdir, readFile, writeFile, access, readdir, rm, rename } from 'fs/promises';
 import { constants } from 'fs';
 import type { ProjectMetadata, Variant } from '../types.js';
 
-const BASE_DIR_NAME = '.parallel-ui';
+const BASE_DIR_NAME = 'variant-ui';
 const VARIANTS_SUBDIR = 'variants';
 
 export class DirectoryManager {
@@ -15,7 +15,7 @@ export class DirectoryManager {
   private activeLocks = new Map<string, Promise<void>>();
 
   constructor(customBaseDir?: string) {
-    this.baseDir = customBaseDir || join(homedir(), BASE_DIR_NAME);
+    this.baseDir = customBaseDir || join(tmpdir(), BASE_DIR_NAME);
   }
 
   getBaseDir(): string {

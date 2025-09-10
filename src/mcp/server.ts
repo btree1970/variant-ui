@@ -691,7 +691,7 @@ You can now cd into ${result.path} to make changes directly, or start a preview 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Parallel UI - Review</title>
+    <title>Variant UI - Review</title>
     <style>
         * {
             margin: 0;
@@ -943,7 +943,7 @@ You can now cd into ${result.path} to make changes directly, or start a preview 
 </head>
 <body>
     <div class="container">
-        <h1>Parallel UI Review</h1>
+        <h1>Variant UI Review</h1>
         <div id="content">
             <div class="loading">Loading variants...</div>
         </div>
