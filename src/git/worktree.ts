@@ -127,6 +127,28 @@ export class WorktreeManager {
       const log = await worktreeGit.log({ maxCount: 1 });
       const baseCommit = log.latest?.hash || '';
 
+      // Copy root-level env files: .env and .env.*
+      try {
+        const fs = await import('fs');
+        const fsp = await import('fs/promises');
+        const path = await import('path');
+
+        const entries = await fsp.readdir(this.projectPath, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isFile()) continue;
+          const name = entry.name;
+          if (!(name === '.env' || name.startsWith('.env.'))) continue;
+          const srcFile = path.join(this.projectPath, name);
+          const dstFile = path.join(worktreePath, name);
+          if (fs.existsSync(srcFile) && !fs.existsSync(dstFile)) {
+            await fsp.copyFile(srcFile, dstFile);
+          }
+        }
+      } catch (e) {
+        // Non-fatal if copying env files fails
+        console.error('Warning: failed to copy root .env files to worktree:', (e as Error).message);
+      }
+
       // Install dependencies in the background for the variant
       // This runs npm install without blocking variant creation
       const { spawn } = await import('child_process');

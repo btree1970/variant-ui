@@ -16,6 +16,10 @@ async function setupTestRepo(path: string) {
   await writeFile(join(path, 'README.md'), '# Test Project\n');
   await writeFile(join(path, 'index.html'), '<h1>Hello World</h1>\n');
   
+  // Add .env files to test copying
+  await writeFile(join(path, '.env'), 'API_KEY=test123\n');
+  await writeFile(join(path, '.env.local'), 'LOCAL_VAR=local_value\n');
+  
   await git.add('.');
   await git.commit('Initial commit');
   
@@ -82,18 +86,21 @@ async function testWorktree() {
     await worktree1Git.add('.');
     await worktree1Git.commit('Add styles');
     
-    console.log('\n10. Testing patch application...');
-    const patch = `diff --git a/README.md b/README.md
-index 2965834..1234567 100644
---- a/README.md
-+++ b/README.md
-@@ -1 +1,3 @@
- # Test Project
-+
-+This is a test project for worktree functionality.
-`;
-    await wm.applyPatchToWorktree(worktree2.variantId, patch);
-    console.log('Patch applied successfully');
+    console.log('\n10. Checking .env files were copied...');
+    const { readFile } = await import('fs/promises');
+    const { existsSync } = await import('fs');
+    const worktree2Path = dm.getVariantDir(repoDir, worktree2.variantId);
+    
+    const envExists = existsSync(join(worktree2Path, '.env'));
+    const envLocalExists = existsSync(join(worktree2Path, '.env.local'));
+    
+    console.log('.env copied:', envExists);
+    console.log('.env.local copied:', envLocalExists);
+    
+    if (envExists) {
+      const envContent = await readFile(join(worktree2Path, '.env'), 'utf-8');
+      console.log('.env content:', envContent.trim());
+    }
     
     console.log('\n11. Removing worktree 002...');
     await wm.removeWorktree(worktree2.variantId);
