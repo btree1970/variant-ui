@@ -140,10 +140,6 @@ export class VariantManager {
     };
   }
 
-  async applyPatch(variantId: string, patchContent: string): Promise<void> {
-    return await this.worktreeManager.applyPatchToWorktree(variantId, patchContent);
-  }
-
   async listVariants(): Promise<Variant[]> {
     const metadata = await this.directoryManager.readMetadata(this.projectPath);
     return metadata?.variants || [];

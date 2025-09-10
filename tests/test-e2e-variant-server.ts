@@ -198,33 +198,16 @@ async function testE2EVariantServer() {
     console.log(`   Expected: 1`);
     console.log(`   ✅ Correct server count\n`);
     
-    // Test 11: Apply patch to variant
-    console.log('📌 Test 11: Apply patch to variant');
-    const patchContent = `diff --git a/pages/api/hello.ts b/pages/api/hello.ts
-index 1234567..abcdefg 100644
---- a/pages/api/hello.ts
-+++ b/pages/api/hello.ts
-@@ -9,5 +9,5 @@ export default function handler(
-   req: NextApiRequest,
-   res: NextApiResponse<Data>,
- ) {
--  res.status(200).json({ name: "John Doe" });
-+  res.status(200).json({ name: "Jane Doe" });
- }
-`;
-    await manager.applyPatch(variant2.variantId, patchContent);
-    console.log(`   ✅ Patch applied\n`);
-    
-    // Test 12: Stop all servers
-    console.log('📌 Test 12: Stop all servers');
+    // Test 11: Stop all servers
+    console.log('📌 Test 11: Stop all servers');
     await manager.stopAllServers();
     const afterStopAll = await manager.getStatus();
     const stillRunning = afterStopAll.filter(s => s.server).length;
     console.log(`   Running servers after stopAll: ${stillRunning}`);
     console.log(`   ✅ All servers stopped\n`);
     
-    // Test 13: Clean up variants
-    console.log('📌 Test 13: Remove variants');
+    // Test 12: Clean up variants
+    console.log('📌 Test 12: Remove variants');
     await manager.removeVariant(variant1.variantId);
     await manager.removeVariant(variant2.variantId);
     const finalVariants = await manager.listVariants();

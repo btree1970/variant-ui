@@ -13,7 +13,6 @@ import {
   CreateVariationSchema,
   ListVariationsSchema,
   RemoveVariationSchema,
-  ApplyPatchSchema,
   CheckStatusSchema,
   StartPreviewSchema,
   StopPreviewSchema,
@@ -114,24 +113,6 @@ export class MCPServer {
             },
           },
           {
-            name: 'apply_patch',
-            description: 'Apply a git patch to a variation',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                variantId: {
-                  type: 'string',
-                  description: 'ID of the variation to patch',
-                },
-                patch: {
-                  type: 'string',
-                  description: 'Git patch content to apply',
-                },
-              },
-              required: ['variantId', 'patch'],
-            },
-          },
-          {
             name: 'check_status',
             description: 'Check git status and working directory state',
             inputSchema: {
@@ -193,9 +174,6 @@ export class MCPServer {
 
           case 'remove_variation':
             return await this.handleRemoveVariation(args);
-
-          case 'apply_patch':
-            return await this.handleApplyPatch(args);
 
           case 'check_status':
             return await this.handleCheckStatus(args);
@@ -311,7 +289,7 @@ export class MCPServer {
 - Base commit: ${result.baseCommit}
 - Description: ${description}
 
-You can now apply changes to this variation using the apply_patch tool or start a preview server.`,
+You can now cd into ${result.path} to make changes directly, or start a preview server.`,
         },
         {
           type: 'text',
@@ -400,34 +378,6 @@ You can now apply changes to this variation using the apply_patch tool or start 
             {
               success: true,
               data: { variantId, removed: true },
-            },
-            null,
-            2
-          ),
-        },
-      ],
-    };
-  }
-
-  private async handleApplyPatch(args: unknown) {
-    const input = ApplyPatchSchema.parse(args);
-    const { variantId, patch } = input;
-
-    const vm = await this.getVariantManager();
-    await vm.applyPatch(variantId, patch);
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Applied patch to variation ${variantId}`,
-        },
-        {
-          type: 'text',
-          text: JSON.stringify(
-            {
-              success: true,
-              data: { variantId, patchApplied: true },
             },
             null,
             2

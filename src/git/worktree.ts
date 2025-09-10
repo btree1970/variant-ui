@@ -1,8 +1,5 @@
 import { simpleGit, type SimpleGit } from 'simple-git';
 import { DirectoryManager } from './directory.js';
-import { join } from 'path';
-import { writeFile, rm } from 'fs/promises';
-import { spawn } from 'node:child_process';
 
 export interface WorktreeInfo {
   path: string;
@@ -283,88 +280,6 @@ export class WorktreeManager {
     }
 
     return managed;
-  }
-
-  async applyPatchToWorktree(variantId: string, patchContent: string): Promise<void> {
-    const worktreePath = this.directoryManager.getVariantDir(this.projectPath, variantId);
-    const patchPath = join(worktreePath, '.parallel-ui-temp.patch');
-
-    try {
-      // Write patch to temp file
-      await writeFile(patchPath, patchContent, 'utf8');
-
-      // Try 3-way merge first for better conflict resolution
-      let applied = false;
-      let applyError = '';
-
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const proc = spawn('git', ['apply', '--3way', '--whitespace=nowarn', patchPath], {
-            cwd: worktreePath,
-          });
-
-          let stderr = '';
-          proc.stderr.on('data', (data) => {
-            stderr += data.toString();
-          });
-
-          proc.on('exit', (code) => {
-            if (code === 0) {
-              resolve();
-            } else {
-              reject(new Error(`3-way merge failed: ${stderr}`));
-            }
-          });
-        });
-        applied = true;
-      } catch (error) {
-        applyError = (error as Error).message;
-        // Fall back to regular apply without 3-way
-        await new Promise<void>((resolve, reject) => {
-          const proc = spawn('git', ['apply', '--whitespace=nowarn', patchPath], {
-            cwd: worktreePath,
-          });
-
-          let stderr = '';
-          proc.stderr.on('data', (data) => {
-            stderr += data.toString();
-          });
-
-          proc.on('exit', (code) => {
-            if (code === 0) {
-              resolve();
-            } else {
-              reject(
-                new Error(
-                  `git apply failed (exit ${code}): ${stderr}. 3-way attempt: ${applyError}`
-                )
-              );
-            }
-          });
-        });
-      }
-
-      // Stage and commit changes
-      const worktreeGit = simpleGit(worktreePath);
-      await worktreeGit.add('.');
-
-      const status = await worktreeGit.status();
-      if (!status.isClean()) {
-        const commitMessage = applied
-          ? `Apply patch to variant ${variantId} (3-way merge)`
-          : `Apply patch to variant ${variantId}`;
-        await worktreeGit.commit(commitMessage);
-      }
-
-      // Update metadata
-      await this.directoryManager.updateVariant(this.projectPath, variantId, (v) => ({
-        ...v,
-        lastUpdatedAt: new Date().toISOString(),
-      }));
-    } finally {
-      // Clean up temp patch file
-      await rm(patchPath, { force: true });
-    }
   }
 
   async mergeVariant(
