@@ -102,8 +102,22 @@ async function testWorktree() {
       console.log('.env content:', envContent.trim());
     }
     
-    console.log('\n11. Removing worktree 002...');
-    await wm.removeWorktree(worktree2.variantId);
+    console.log('\n11. Testing git worktree prune after directory removal...');
+    const { rm: rmDir } = await import('fs/promises');
+    console.log('Simulating system tmp cleanup - removing variant directory...');
+    await rmDir(worktree2Path, { recursive: true, force: true });
+    
+    console.log('Directory exists after removal:', existsSync(worktree2Path));
+    
+    const gitWorktreesBefore = await wm.listAllWorktrees();
+    console.log('Git worktrees before prune:', gitWorktreesBefore.map(w => w.path.split('/').pop()).join(', '));
+    
+    console.log('Running git worktree prune...');
+    await wm.pruneWorktrees();
+    
+    const gitWorktreesAfter = await wm.listAllWorktrees();
+    console.log('Git worktrees after prune:', gitWorktreesAfter.map(w => w.path.split('/').pop()).join(', '));
+    console.log('Successfully pruned:', gitWorktreesBefore.length - gitWorktreesAfter.length, 'worktree(s)');
     
     console.log('\n12. Final worktree list...');
     const finalWorktrees = await wm.listManagedWorktrees();

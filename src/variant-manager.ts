@@ -208,7 +208,6 @@ export class VariantManager extends EventEmitter {
   async stopAllServers(): Promise<void> {
     await this.devServerManager.stopAll();
 
-    // Update all variant statuses
     const metadata = await this.directoryManager.readMetadata(this.projectPath);
     if (metadata) {
       for (const variant of metadata.variants) {
@@ -221,5 +220,9 @@ export class VariantManager extends EventEmitter {
         }
       }
     }
+  }
+
+  async pruneWorktrees(): Promise<void> {
+    await this.worktreeManager.pruneWorktrees();
   }
 }

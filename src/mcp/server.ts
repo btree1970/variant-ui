@@ -68,6 +68,13 @@ export class MCPServer {
       const gitRoot = await this.getGitRoot();
       this.variantManager = new VariantManager(gitRoot);
       this.setupEventListeners();
+
+      try {
+        console.error('Pruning git worktrees...');
+        await this.variantManager.pruneWorktrees();
+      } catch (error) {
+        console.error('Warning: Failed to prune worktrees:', (error as Error).message);
+      }
     }
     return this.variantManager;
   }
