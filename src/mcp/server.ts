@@ -9,6 +9,7 @@ import {
 import { VariantManager } from '../variant-manager.js';
 import { simpleGit } from 'simple-git';
 import { realpath } from 'fs/promises';
+import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import {
   CreateVariationSchema,
   ListVariationsSchema,
@@ -24,6 +25,8 @@ export class MCPServer {
   private workingDirectory: string;
   private gitRoot?: string;
   private variantManager?: VariantManager;
+  private httpServer?: ReturnType<typeof createServer>;
+  private httpPort = 5400;
 
   constructor(workingDirectory?: string) {
     this.workingDirectory = workingDirectory || process.cwd();
@@ -514,5 +517,386 @@ You can now cd into ${result.path} to make changes directly, or start a preview 
     await this.server.connect(transport);
     console.error('MCP Server started on stdio');
     console.error(`Working directory: ${this.workingDirectory}`);
+
+    // Start HTTP server for review UI
+    this.startReviewUI();
+  }
+
+  private startReviewUI() {
+    this.httpServer = createServer((req, res) => {
+      this.handleHttpRequest(req, res);
+    });
+
+    this.httpServer.listen(this.httpPort, () => {
+      console.error(`Review UI available at http://localhost:${this.httpPort}`);
+    });
+  }
+
+  private async handleHttpRequest(req: IncomingMessage, res: ServerResponse) {
+    const url = new URL(req.url || '/', `http://localhost:${this.httpPort}`);
+
+    // Enable CORS for API requests
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    try {
+      if (url.pathname === '/') {
+        // Serve the review UI HTML
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(this.getReviewHTML());
+      } else if (url.pathname === '/api/variants') {
+        // API endpoint for variant data
+        const variants = await this.getVariantsData();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(variants));
+      } else {
+        res.writeHead(404);
+        res.end('Not found');
+      }
+    } catch (error) {
+      console.error('HTTP request error:', error);
+      res.writeHead(500);
+      res.end('Internal server error');
+    }
+  }
+
+  private async getVariantsData() {
+    if (!this.variantManager) {
+      return [];
+    }
+
+    try {
+      const variants = await this.variantManager.getStatus();
+      return variants.map((v) => ({
+        id: v.id,
+        description: v.description,
+        branch: v.branch,
+        status: v.status,
+        port: v.server?.port,
+        url: v.server?.url,
+        path: v.path,
+      }));
+    } catch (error) {
+      console.error('Error getting variants:', error);
+      return [];
+    }
+  }
+
+  private getReviewHTML(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parallel UI - Review</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .variant-grid {
+            display: grid;
+            gap: 20px;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+        }
+        
+        .variant-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-left: 4px solid #ddd;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .variant-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        
+        .variant-card.running {
+            border-left-color: #10b981;
+        }
+        
+        .variant-card.stopped {
+            border-left-color: #6b7280;
+        }
+        
+        .variant-card.failed {
+            border-left-color: #ef4444;
+        }
+        
+        .variant-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 15px;
+        }
+        
+        .variant-id {
+            font-size: 20px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .variant-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+        
+        .variant-status.running {
+            background: #10b98120;
+            color: #059669;
+        }
+        
+        .variant-status.stopped {
+            background: #6b728020;
+            color: #4b5563;
+        }
+        
+        .variant-status.failed {
+            background: #ef444420;
+            color: #dc2626;
+        }
+        
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+        
+        .variant-info {
+            margin-bottom: 15px;
+        }
+        
+        .info-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .info-label {
+            font-weight: 500;
+            min-width: 80px;
+        }
+        
+        .info-value {
+            color: #333;
+            word-break: break-all;
+        }
+        
+        .variant-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #e5e7eb;
+        }
+        
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        .btn-primary:hover:not(:disabled) {
+            background: #2563eb;
+        }
+        
+        .btn-secondary {
+            background: #e5e7eb;
+            color: #374151;
+        }
+        
+        .btn-secondary:hover:not(:disabled) {
+            background: #d1d5db;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .error {
+            background: #fee;
+            color: #c00;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+        
+        .empty-state h2 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Parallel UI Review</h1>
+        <div id="content">
+            <div class="loading">Loading variants...</div>
+        </div>
+    </div>
+    
+    <script>
+        let variants = [];
+        
+        async function loadVariants() {
+            try {
+                const response = await fetch('/api/variants');
+                if (!response.ok) throw new Error('Failed to load variants');
+                
+                variants = await response.json();
+                renderVariants();
+            } catch (error) {
+                document.getElementById('content').innerHTML = 
+                    '<div class="error">Error loading variants: ' + error.message + '</div>';
+            }
+        }
+        
+        function renderVariants() {
+            const content = document.getElementById('content');
+            
+            if (variants.length === 0) {
+                content.innerHTML = \`
+                    <div class="empty-state">
+                        <h2>No variants yet</h2>
+                        <p>Create variants using the MCP client to see them here.</p>
+                    </div>
+                \`;
+                return;
+            }
+            
+            const html = \`
+                <div class="variant-grid">
+                    \${variants.map(v => renderVariantCard(v)).join('')}
+                </div>
+            \`;
+            
+            content.innerHTML = html;
+        }
+        
+        function renderVariantCard(variant) {
+            const isRunning = variant.status === 'running';
+            const statusClass = variant.status || 'stopped';
+            
+            return \`
+                <div class="variant-card \${statusClass}">
+                    <div class="variant-header">
+                        <div class="variant-id">Variant \${variant.id}</div>
+                        <div class="variant-status \${statusClass}">
+                            <span class="status-dot"></span>
+                            \${variant.status || 'stopped'}
+                        </div>
+                    </div>
+                    
+                    <div class="variant-info">
+                        \${variant.description ? \`
+                            <div class="info-row">
+                                <span class="info-label">Description:</span>
+                                <span class="info-value">\${variant.description}</span>
+                            </div>
+                        \` : ''}
+                        
+                        <div class="info-row">
+                            <span class="info-label">Branch:</span>
+                            <span class="info-value">\${variant.branch}</span>
+                        </div>
+                        
+                        \${variant.port ? \`
+                            <div class="info-row">
+                                <span class="info-label">Port:</span>
+                                <span class="info-value">\${variant.port}</span>
+                            </div>
+                        \` : ''}
+                    </div>
+                    
+                    <div class="variant-actions">
+                        \${isRunning && variant.url ? \`
+                            <button class="btn-primary" onclick="window.open('\${variant.url}', '_blank')">
+                                Open in New Tab
+                            </button>
+                        \` : ''}
+                        
+                        <button class="btn-secondary" onclick="copyPath('\${variant.path}')">
+                            Copy Path
+                        </button>
+                    </div>
+                </div>
+            \`;
+        }
+        
+        function copyPath(path) {
+            navigator.clipboard.writeText(path).then(() => {
+                // Could add a toast notification here
+                console.log('Path copied to clipboard');
+            });
+        }
+        
+        // Load variants on page load
+        loadVariants();
+        
+        // Refresh every 3 seconds
+        setInterval(loadVariants, 3000);
+    </script>
+</body>
+</html>`;
   }
 }
