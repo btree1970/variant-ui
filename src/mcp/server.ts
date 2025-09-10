@@ -26,11 +26,12 @@ export class MCPServer {
   private gitRoot?: string;
   private variantManager?: VariantManager;
   private httpServer?: ReturnType<typeof createServer>;
-  private httpPort = 5400;
+  private httpPort: number;
   private sseClients: Set<ServerResponse> = new Set();
 
   constructor(workingDirectory?: string) {
     this.workingDirectory = workingDirectory || process.cwd();
+    this.httpPort = parseInt(process.env.VARIANT_UI_PORT || '5400', 10);
 
     this.server = new Server(
       {
@@ -576,8 +577,8 @@ You can now cd into ${result.path} to make changes directly, or start a preview 
     console.error('MCP Server started on stdio');
     console.error(`Working directory: ${this.workingDirectory}`);
 
-    // Start HTTP server for review UI
-    this.startReviewUI();
+    // Start HTTP server for review UI (await to ensure it starts successfully)
+    await this.startReviewUI();
   }
 
   async shutdown() {
@@ -606,13 +607,34 @@ You can now cd into ${result.path} to make changes directly, or start a preview 
     console.error('All servers stopped');
   }
 
-  private startReviewUI() {
-    this.httpServer = createServer((req, res) => {
-      this.handleHttpRequest(req, res);
-    });
+  private startReviewUI(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.httpServer = createServer((req, res) => {
+        this.handleHttpRequest(req, res);
+      });
 
-    this.httpServer.listen(this.httpPort, () => {
-      console.error(`Review UI available at http://localhost:${this.httpPort}`);
+      this.httpServer.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE') {
+          reject(
+            new Error(
+              `HTTP port ${this.httpPort} is already in use. Set VARIANT_UI_PORT environment variable to use a different port.`
+            )
+          );
+        } else if (err.code === 'EACCES') {
+          reject(
+            new Error(
+              `Permission denied to bind to port ${this.httpPort}. Try a port number above 1024.`
+            )
+          );
+        } else {
+          reject(new Error(`Failed to start HTTP server: ${err.message}`));
+        }
+      });
+
+      this.httpServer.listen(this.httpPort, '127.0.0.1', () => {
+        console.error(`Review UI available at http://localhost:${this.httpPort}`);
+        resolve();
+      });
     });
   }
 
