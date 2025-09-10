@@ -2,6 +2,7 @@ import { WorktreeManager, type CreateWorktreeResult } from './git/worktree.js';
 import { DirectoryManager } from './git/directory.js';
 import { DevServerManager, type DevServerInfo } from './orchestrator/dev-server.js';
 import { createHash } from 'crypto';
+import { EventEmitter } from 'events';
 import type { Variant } from './types.js';
 
 export interface PreviewInfo {
@@ -17,7 +18,16 @@ export interface VariantStatus extends Variant {
   server?: DevServerInfo;
 }
 
-export class VariantManager {
+export type VariantEvent =
+  | { type: 'variant:created'; variant: Variant; path: string }
+  | { type: 'variant:removed'; variantId: string }
+  | { type: 'variant:updated'; variant: Variant }
+  | { type: 'preview:starting'; variantId: string }
+  | { type: 'preview:ready'; variantId: string; port: number; url: string }
+  | { type: 'preview:failed'; variantId: string; error: string }
+  | { type: 'preview:stopped'; variantId: string };
+
+export class VariantManager extends EventEmitter {
   private worktreeManager: WorktreeManager;
   private directoryManager: DirectoryManager;
   private devServerManager: DevServerManager;
@@ -25,6 +35,7 @@ export class VariantManager {
   private projectKey: string;
 
   constructor(projectPath: string) {
+    super();
     this.projectPath = projectPath;
     this.directoryManager = new DirectoryManager();
     this.worktreeManager = new WorktreeManager(projectPath, this.directoryManager);
@@ -37,15 +48,28 @@ export class VariantManager {
   }
 
   async createVariant(baseRef: string, description?: string): Promise<CreateWorktreeResult> {
-    return await this.worktreeManager.createWorktree(baseRef, description);
+    const result = await this.worktreeManager.createWorktree(baseRef, description);
+
+    const variant = await this.getVariantStatus(result.variantId);
+    if (variant) {
+      this.emit('variant:created', {
+        type: 'variant:created',
+        variant,
+        path: result.path,
+      });
+    }
+
+    return result;
   }
 
   async removeVariant(variantId: string): Promise<void> {
-    // Stop server if running
     await this.devServerManager.stopServer(this.projectKey, variantId);
-
-    // Remove variant and worktree
     await this.worktreeManager.removeWorktree(variantId);
+
+    this.emit('variant:removed', {
+      type: 'variant:removed',
+      variantId,
+    });
   }
 
   async startPreview(variantId: string): Promise<PreviewInfo> {
@@ -58,6 +82,11 @@ export class VariantManager {
 
     const variantPath = this.directoryManager.getVariantDir(this.projectPath, variantId);
 
+    this.emit('preview:starting', {
+      type: 'preview:starting',
+      variantId,
+    });
+
     const serverInfo = await this.devServerManager.startServer({
       projectPath: variantPath,
       variantId: variant.id,
@@ -69,6 +98,21 @@ export class VariantManager {
           port: info.port,
           lastUpdatedAt: new Date().toISOString(),
         }));
+
+        this.emit('preview:ready', {
+          type: 'preview:ready',
+          variantId,
+          port: info.port,
+          url: info.url || `http://127.0.0.1:${info.port}`,
+        });
+
+        const updated = await this.getVariantStatus(variantId);
+        if (updated) {
+          this.emit('variant:updated', {
+            type: 'variant:updated',
+            variant: updated,
+          });
+        }
       },
       onError: async (error) => {
         await this.directoryManager.updateVariant(this.projectPath, variantId, (v) => ({
@@ -77,6 +121,12 @@ export class VariantManager {
           error: error.message,
           lastUpdatedAt: new Date().toISOString(),
         }));
+
+        this.emit('preview:failed', {
+          type: 'preview:failed',
+          variantId,
+          error: error.message,
+        });
       },
       onStop: async () => {
         await this.directoryManager.updateVariant(this.projectPath, variantId, (v) => ({
@@ -84,6 +134,11 @@ export class VariantManager {
           status: 'stopped',
           lastUpdatedAt: new Date().toISOString(),
         }));
+
+        this.emit('preview:stopped', {
+          type: 'preview:stopped',
+          variantId,
+        });
       },
     });
 
@@ -104,6 +159,11 @@ export class VariantManager {
       status: 'stopped',
       lastUpdatedAt: new Date().toISOString(),
     }));
+
+    this.emit('preview:stopped', {
+      type: 'preview:stopped',
+      variantId,
+    });
   }
 
   async getStatus(): Promise<VariantStatus[]> {

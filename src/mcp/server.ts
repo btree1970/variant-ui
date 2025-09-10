@@ -27,6 +27,7 @@ export class MCPServer {
   private variantManager?: VariantManager;
   private httpServer?: ReturnType<typeof createServer>;
   private httpPort = 5400;
+  private sseClients: Set<ServerResponse> = new Set();
 
   constructor(workingDirectory?: string) {
     this.workingDirectory = workingDirectory || process.cwd();
@@ -65,8 +66,65 @@ export class MCPServer {
     if (!this.variantManager) {
       const gitRoot = await this.getGitRoot();
       this.variantManager = new VariantManager(gitRoot);
+      this.setupEventListeners();
     }
     return this.variantManager;
+  }
+
+  private setupEventListeners() {
+    if (!this.variantManager) return;
+
+    this.variantManager.on('variant:created', (event) => {
+      console.error(`[Event] Variant created: ${event.variant.id} - ${event.variant.description}`);
+      this.broadcastSSE({ type: 'variant:created', data: event });
+    });
+
+    this.variantManager.on('variant:removed', (event) => {
+      console.error(`[Event] Variant removed: ${event.variantId}`);
+      this.broadcastSSE({ type: 'variant:removed', data: event });
+    });
+
+    this.variantManager.on('variant:updated', (event) => {
+      console.error(
+        `[Event] Variant updated: ${event.variant.id} - status: ${event.variant.status}`
+      );
+      this.broadcastSSE({ type: 'variant:updated', data: event });
+    });
+
+    this.variantManager.on('preview:starting', (event) => {
+      console.error(`[Event] Preview starting: ${event.variantId}`);
+      this.broadcastSSE({ type: 'preview:starting', data: event });
+    });
+
+    this.variantManager.on('preview:ready', (event) => {
+      console.error(`[Event] Preview ready: ${event.variantId} at ${event.url}`);
+      this.broadcastSSE({ type: 'preview:ready', data: event });
+    });
+
+    this.variantManager.on('preview:failed', (event) => {
+      console.error(`[Event] Preview failed: ${event.variantId} - ${event.error}`);
+      this.broadcastSSE({ type: 'preview:failed', data: event });
+    });
+
+    this.variantManager.on('preview:stopped', (event) => {
+      console.error(`[Event] Preview stopped: ${event.variantId}`);
+      this.broadcastSSE({ type: 'preview:stopped', data: event });
+    });
+  }
+
+  private broadcastSSE(event: { type: string; data: unknown }) {
+    const message = `data: ${JSON.stringify(event)}\n\n`;
+    const deadClients: ServerResponse[] = [];
+
+    this.sseClients.forEach((client) => {
+      try {
+        client.write(message);
+      } catch {
+        deadClients.push(client);
+      }
+    });
+
+    deadClients.forEach((client) => this.sseClients.delete(client));
   }
 
   private setupHandlers() {
@@ -548,14 +606,26 @@ You can now cd into ${result.path} to make changes directly, or start a preview 
 
     try {
       if (url.pathname === '/') {
-        // Serve the review UI HTML
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(this.getReviewHTML());
       } else if (url.pathname === '/api/variants') {
-        // API endpoint for variant data
         const variants = await this.getVariantsData();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(variants));
+      } else if (url.pathname === '/api/events') {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        });
+
+        res.write('data: {"type":"connected"}\n\n');
+
+        this.sseClients.add(res);
+
+        req.on('close', () => {
+          this.sseClients.delete(res);
+        });
       } else {
         res.writeHead(404);
         res.end('Not found');
@@ -785,6 +855,64 @@ You can now cd into ${result.path} to make changes directly, or start a preview 
             color: #333;
             margin-bottom: 10px;
         }
+        
+        .activity-log {
+            margin-top: 30px;
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        
+        .activity-log h2 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        
+        .log-entries {
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 13px;
+            background: #f9fafb;
+            border-radius: 4px;
+            padding: 10px;
+        }
+        
+        .log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            gap: 10px;
+        }
+        
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+        
+        .log-time {
+            color: #6b7280;
+            min-width: 80px;
+        }
+        
+        .log-type {
+            font-weight: 600;
+            min-width: 120px;
+        }
+        
+        .log-type.variant-created { color: #10b981; }
+        .log-type.variant-removed { color: #ef4444; }
+        .log-type.variant-updated { color: #3b82f6; }
+        .log-type.preview-starting { color: #f59e0b; }
+        .log-type.preview-ready { color: #10b981; }
+        .log-type.preview-failed { color: #ef4444; }
+        .log-type.preview-stopped { color: #6b7280; }
+        
+        .log-message {
+            flex: 1;
+            color: #374151;
+        }
     </style>
 </head>
 <body>
@@ -793,10 +921,24 @@ You can now cd into ${result.path} to make changes directly, or start a preview 
         <div id="content">
             <div class="loading">Loading variants...</div>
         </div>
+        
+        <div class="activity-log">
+            <h2>Activity Log</h2>
+            <div class="log-entries" id="log-entries">
+                <div class="log-entry">
+                    <span class="log-time">--:--:--</span>
+                    <span class="log-type">Waiting</span>
+                    <span class="log-message">Waiting for events...</span>
+                </div>
+            </div>
+        </div>
     </div>
     
     <script>
         let variants = [];
+        let eventSource = null;
+        let eventLog = [];
+        const MAX_LOG_ENTRIES = 50;
         
         async function loadVariants() {
             try {
@@ -809,6 +951,100 @@ You can now cd into ${result.path} to make changes directly, or start a preview 
                 document.getElementById('content').innerHTML = 
                     '<div class="error">Error loading variants: ' + error.message + '</div>';
             }
+        }
+        
+        function addLogEntry(event) {
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+            let message = '';
+            const eventType = event.type.replace(':', '-');
+            
+            switch(event.type) {
+                case 'variant:created':
+                    message = \`Created variant \${event.data.variant.id} - \${event.data.variant.description || 'No description'}\`;
+                    break;
+                case 'variant:removed':
+                    message = \`Removed variant \${event.data.variantId}\`;
+                    break;
+                case 'variant:updated':
+                    message = \`Updated variant \${event.data.variant.id} - status: \${event.data.variant.status}\`;
+                    break;
+                case 'preview:starting':
+                    message = \`Starting preview for variant \${event.data.variantId}\`;
+                    break;
+                case 'preview:ready':
+                    message = \`Preview ready for variant \${event.data.variantId} at port \${event.data.port}\`;
+                    break;
+                case 'preview:failed':
+                    message = \`Preview failed for variant \${event.data.variantId}: \${event.data.error}\`;
+                    break;
+                case 'preview:stopped':
+                    message = \`Preview stopped for variant \${event.data.variantId}\`;
+                    break;
+                case 'connected':
+                    message = 'Connected to event stream';
+                    break;
+                default:
+                    message = JSON.stringify(event.data);
+            }
+            
+            eventLog.unshift({ time, type: event.type, message });
+            if (eventLog.length > MAX_LOG_ENTRIES) {
+                eventLog = eventLog.slice(0, MAX_LOG_ENTRIES);
+            }
+            
+            renderLog();
+        }
+        
+        function renderLog() {
+            const logContainer = document.getElementById('log-entries');
+            if (!logContainer) return;
+            
+            if (eventLog.length === 0) {
+                logContainer.innerHTML = \`
+                    <div class="log-entry">
+                        <span class="log-time">--:--:--</span>
+                        <span class="log-type">Waiting</span>
+                        <span class="log-message">Waiting for events...</span>
+                    </div>
+                \`;
+                return;
+            }
+            
+            const html = eventLog.map(entry => \`
+                <div class="log-entry">
+                    <span class="log-time">\${entry.time}</span>
+                    <span class="log-type \${entry.type.replace(':', '-')}">\${entry.type.replace(':', ' ')}</span>
+                    <span class="log-message">\${entry.message}</span>
+                </div>
+            \`).join('');
+            
+            logContainer.innerHTML = html;
+        }
+        
+        function connectSSE() {
+            eventSource = new EventSource('/api/events');
+            
+            eventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                console.log('SSE Event:', data);
+                
+                addLogEntry(data);
+                
+                if (data.type === 'connected') {
+                    console.log('SSE Connected');
+                    return;
+                }
+                
+                loadVariants();
+            };
+            
+            eventSource.onerror = (error) => {
+                console.error('SSE Error:', error);
+                if (eventSource.readyState === EventSource.CLOSED) {
+                    addLogEntry({ type: 'disconnected', data: { message: 'Connection lost, reconnecting...' } });
+                    setTimeout(connectSSE, 5000);
+                }
+            };
         }
         
         function renderVariants() {
@@ -885,16 +1121,12 @@ You can now cd into ${result.path} to make changes directly, or start a preview 
         
         function copyPath(path) {
             navigator.clipboard.writeText(path).then(() => {
-                // Could add a toast notification here
                 console.log('Path copied to clipboard');
             });
         }
         
-        // Load variants on page load
         loadVariants();
-        
-        // Refresh every 3 seconds
-        setInterval(loadVariants, 3000);
+        connectSSE();
     </script>
 </body>
 </html>`;

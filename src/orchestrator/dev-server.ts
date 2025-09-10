@@ -157,12 +157,12 @@ class DevServer extends EventEmitter {
       return;
     }
 
-    console.log(`Waiting for npm install to complete in ${this.options.projectPath}...`);
+    console.error(`Waiting for npm install to complete in ${this.options.projectPath}...`);
 
     const startTime = Date.now();
     while (Date.now() - startTime < maxWaitSeconds * 1000) {
       if (existsSync(lockMarker)) {
-        console.log(`Dependencies ready for variant ${this.options.variantId}`);
+        console.error(`Dependencies ready for variant ${this.options.variantId}`);
         return;
       }
 

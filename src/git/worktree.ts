@@ -138,7 +138,7 @@ export class WorktreeManager {
 
       // Only install if package.json exists and node_modules doesn't
       if (existsSync(variantPackageJson) && !existsSync(variantNodeModules)) {
-        console.log(`Installing dependencies in background for variant ${variantId}...`);
+        console.error(`Installing dependencies in background for variant ${variantId}...`);
 
         // Run npm install in the background
         const installProcess = spawn('npm', ['install'], {
@@ -151,8 +151,7 @@ export class WorktreeManager {
         // Unreference the process so it can continue after parent exits
         installProcess.unref();
 
-        // Log PID for debugging
-        console.log(`Background npm install started (PID: ${installProcess.pid})`);
+        console.error(`Background npm install started (PID: ${installProcess.pid})`);
       }
 
       // Update the placeholder variant with full details
