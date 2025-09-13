@@ -42,6 +42,8 @@ claude mcp add variant-ui node <path-to-variant-ui>/dist/index.js --env VARIANT_
 
 **Pro tip:** For the best experience, enable auto-approval for file edits in the variant directories. This lets your AI agent work seamlessly without constant permission prompts.
 
+**Pro tip for Claude Code users:** Use Claude sub-agents to run every code change in each variant in parallel. This dramatically speeds up iteration when testing multiple approaches simultaneously.
+
 Once added to your MCP client, you can use these commands in any conversation:
 
 ### Example prompts
