@@ -1,10 +1,20 @@
 # variant-ui (Active Development)
 
-MCP server for rapid UI iteration. Create, test, and compare multiple UI variants side-by-side.
+**Can't decide between UI approaches? Build them all in parallel.**
 
-## What it does
+MCP server for rapid UI prototyping. Spin up multiple prototypes simultaneously, see them running side-by-side, ship what actually works.
 
-Spin up isolated git worktrees to test different UI approaches simultaneously. Each variant gets its own port, its own dependencies, and its own branch. Compare them in real-time, merge the winner.
+## Why this exists
+
+The Prototype Valley of Death:
+- **Figma prototype:** Looks perfect, doesn't run
+- **Code prototype:** Takes too long, so you only build one
+- **Result:** You commit to the first idea that seems OK
+
+What AI enables:
+- Build 5 prototypes in the time it used to take for one
+- Each variant runs independently on its own port
+- Compare them in real-time, merge the winner
 
 ![Review UI](docs/images/review-ui.png)
 
@@ -48,29 +58,26 @@ Once added to your MCP client, you can use these commands in any conversation:
 
 ### Example prompts
 
-Test different design approaches:
+Explore different vibes:
 ```
-Create and preview 3 hero section variants: one with a video background, 
-one with a static image, and come up with a third creative approach
-```
-
-Explore design systems:
-```
-Create 5 variants testing different visual styles for my dashboard: 
-glassmorphism, neumorphism, flat design, material design, and brutalist. 
-Try different color schemes and typography for each
+I want to try 3 different feels for this landing page - one that feels premium,
+one that's playful, and one that's super minimal
 ```
 
-Let AI suggest improvements:
 ```
-I need to improve my checkout flow. Create and preview 3 different 
-variants with your best ideas for reducing cart abandonment
+Build 5 variants with completely different vibes: brutalist concrete,
+y2k web aesthetic, terminal hacker mode, corporate Memphis, and one
+that looks like it's from the year 3000
 ```
 
-Compare specific patterns:
+Quick decisions:
 ```
-Test sidebar navigation vs top navbar. Create both variants and 
-show me how they look on mobile and desktop
+Should we use a modal or drawer for settings? Create both and let's see
+```
+
+```
+This form works but it's boring. Show me 3 versions with
+different micro-interactions and transitions
 ```
 
 Check what's running:
