@@ -46,6 +46,11 @@ claude mcp add variant-ui node <path-to-variant-ui>/dist/index.js
 claude mcp add variant-ui node <path-to-variant-ui>/dist/index.js --env VARIANT_UI_PORT=8080
 ```
 
+### Codex CLI
+```bash
+codex mcp add variant-ui <path-to-variant-ui>/dist/index.js
+```
+
 **Important:** Add variant-ui to your project settings, not global settings. This tool is designed to run only when you're working on a specific project.
 
 ## Usage
